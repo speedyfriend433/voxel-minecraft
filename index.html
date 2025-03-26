@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voxel Game</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #87CEEB; } /* Sky blue */
+        canvas { display: block; }
+        #blocker { /* For PointerLockControls */
+            position: absolute; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5);
+            display: flex; justify-content: center; align-items: center; text-align: center;
+            color: white; font-size: 20px; cursor: pointer;
+        }
+        #crosshair {
+            position: absolute; top: 50%; left: 50%; width: 4px; height: 4px;
+            background-color: white; border: 1px solid black;
+            transform: translate(-50%, -50%); border-radius: 50%; pointer-events: none;
+        }
+        /* Basic UI Placeholders */
+        #toolbar { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
+                   display: flex; background: rgba(0,0,0,0.3); padding: 5px; border-radius: 3px; }
+        .toolbar-slot { width: 40px; height: 40px; border: 1px solid #fff; margin: 2px;
+                        background: rgba(255,255,255,0.2); display: flex; justify-content: center; align-items: center;
+                        color: white; font-size: 10px; }
+        .toolbar-slot.selected { border: 2px solid yellow; }
+    </style>
+</head>
+<body>
+    <div id="blocker">
+        <div>Click to Play</div>
+        <small style="margin-top: 10px;">WASD=Move, Space=Jump, Mouse=Look, LeftClick=Break, RightClick=Place</small>
+    </div>
+    <div id="crosshair">+</div>
+    <div id="toolbar">
+        <div class="toolbar-slot selected">DIRT</div>
+        <div class="toolbar-slot">STONE</div>
+        <div class="toolbar-slot">WOOD</div>
+         <!-- ... more slots ... -->
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+                 "noise": "https://unpkg.com/simplex-noise@4.0.1/dist/esm/simplex-noise.js" // Noise library
+            }
+        }
+    </script>
+    <script type="module" src="voxel-game.js"></script>
+</body>
+</html>
