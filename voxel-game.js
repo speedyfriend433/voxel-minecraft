@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
 import { createNoise2D } from 'noise'; // Using simplex-noise library
 
 // --- Constants ---
@@ -192,7 +193,7 @@ class Chunk {
         if (geometries.length > 0) {
              // !! VERY INEFFICIENT !! Merging many small boxes is slow.
              // Replace this with Greedy Meshing for production.
-            const mergedGeometry = THREE.BufferGeometryUtils.mergeGeometries(geometries, false);
+            const mergedGeometry = BufferGeometryUtils.mergeBufferGeometries(geometries, false);
             this.mesh = new THREE.Mesh(mergedGeometry, material);
             // this.mesh.castShadow = true;
             // this.mesh.receiveShadow = true;
@@ -370,10 +371,45 @@ const keys = {};
 function onKeyDown(event) { keys[event.code] = true; }
 function onKeyUp(event) { keys[event.code] = false; }
 
-function handleMovement(deltaTime) {
-    const speed = 5 * deltaTime;
-    const player = controls.getObject();
+// Helper function to get blocks intersecting a bounding box
+function getBlocksInBoundingBox(box) {
+    const blocks = [];
+    const minX = Math.floor(box.min.x);
+    const maxX = Math.ceil(box.max.x);
+    const minY = Math.floor(box.min.y);
+    const maxY = Math.ceil(box.max.y);
+    const minZ = Math.floor(box.min.z);
+    const maxZ = Math.ceil(box.max.z);
 
+    for (let y = minY; y < maxY; y++) {
+        for (let z = minZ; z < maxZ; z++) {
+            for (let x = minX; x < maxX; x++) {
+                if (isSolidWorld(x, y, z)) {
+                    blocks.push({ x, y, z });
+                }
+            }
+        }
+    }
+    return blocks;
+}
+
+// Helper to get the player's current world bounding box
+function getPlayerBoundingBox(position) {
+    const halfWidth = PLAYER_WIDTH / 2;
+    // Player position is eye level, bbox bottom is at position.y - PLAYER_HEIGHT
+    return new THREE.Box3(
+        new THREE.Vector3(position.x - halfWidth, position.y - PLAYER_HEIGHT, position.z - halfWidth),
+        new THREE.Vector3(position.x + halfWidth, position.y, position.z + halfWidth)
+    );
+}
+
+
+function handleMovement(deltaTime) {
+    const player = controls.getObject();
+    const speed = 5; // Base speed, deltaTime applied later
+    const epsilon = 0.001; // Small offset to prevent sticking
+
+    // --- Calculate Intended Velocity ---
     const moveForward = (keys['KeyW'] || keys['ArrowUp']) ? 1 : 0;
     const moveBackward = (keys['KeyS'] || keys['ArrowDown']) ? 1 : 0;
     const moveLeft = (keys['KeyA'] || keys['ArrowLeft']) ? 1 : 0;
@@ -381,103 +417,135 @@ function handleMovement(deltaTime) {
 
     const direction = new THREE.Vector3();
     player.getWorldDirection(direction);
-    direction.y = 0; // Move horizontally
+    direction.y = 0;
     direction.normalize();
 
-    const right = new THREE.Vector3().crossVectors(player.up, direction).normalize();
+    // Calculate the RIGHT vector using forward x up
+    const right = new THREE.Vector3().crossVectors(direction, player.up).normalize(); // Swapped order here
 
-    const moveDir = new THREE.Vector3();
-    moveDir.addScaledVector(direction, (moveForward - moveBackward) * speed);
-    moveDir.addScaledVector(right, (moveLeft - moveRight) * speed);
-
-    // --- Basic Collision Detection ---
-    // Check potential new position before moving
-    const currentPos = player.position;
-    const potentialPos = currentPos.clone().add(moveDir);
-
-    // AABB collision (simplified - only checks feet and head corners)
-    const checkPositions = [
-        // Feet level corners
-        new THREE.Vector3(potentialPos.x - PLAYER_WIDTH / 2, currentPos.y - PLAYER_HEIGHT + 0.1, potentialPos.z - PLAYER_WIDTH / 2),
-        new THREE.Vector3(potentialPos.x + PLAYER_WIDTH / 2, currentPos.y - PLAYER_HEIGHT + 0.1, potentialPos.z - PLAYER_WIDTH / 2),
-        new THREE.Vector3(potentialPos.x - PLAYER_WIDTH / 2, currentPos.y - PLAYER_HEIGHT + 0.1, potentialPos.z + PLAYER_WIDTH / 2),
-        new THREE.Vector3(potentialPos.x + PLAYER_WIDTH / 2, currentPos.y - PLAYER_HEIGHT + 0.1, potentialPos.z + PLAYER_WIDTH / 2),
-         // Head level corners (just below head)
-        new THREE.Vector3(potentialPos.x - PLAYER_WIDTH / 2, currentPos.y - 0.1, potentialPos.z - PLAYER_WIDTH / 2),
-        new THREE.Vector3(potentialPos.x + PLAYER_WIDTH / 2, currentPos.y - 0.1, potentialPos.z - PLAYER_WIDTH / 2),
-        new THREE.Vector3(potentialPos.x - PLAYER_WIDTH / 2, currentPos.y - 0.1, potentialPos.z + PLAYER_WIDTH / 2),
-        new THREE.Vector3(potentialPos.x + PLAYER_WIDTH / 2, currentPos.y - 0.1, potentialPos.z + PLAYER_WIDTH / 2),
-    ];
-
-    let canMoveX = true;
-    let canMoveZ = true;
-
-    for (const pos of checkPositions) {
-        const blockX = Math.floor(pos.x);
-        const blockY = Math.floor(pos.y);
-        const blockZ = Math.floor(pos.z);
-        if (isSolidWorld(blockX, blockY, blockZ)) {
-            // Check which axis caused the collision
-            if (Math.abs(pos.x - currentPos.x) > Math.abs(currentPos.x - Math.floor(currentPos.x) - 0.5)) canMoveX = false;
-            if (Math.abs(pos.z - currentPos.z) > Math.abs(currentPos.z - Math.floor(currentPos.z) - 0.5)) canMoveZ = false;
-             if (!canMoveX && !canMoveZ) break; // Both blocked
-        }
+    const horizontalVelocity = new THREE.Vector3();
+    if (moveForward || moveBackward || moveLeft || moveRight) { // Only normalize if there's input
+        horizontalVelocity.addScaledVector(direction, (moveForward - moveBackward));
+        horizontalVelocity.addScaledVector(right, (moveRight - moveLeft)); // Apply movement along the calculated right vector
+        horizontalVelocity.normalize().multiplyScalar(speed);
     }
 
-    if (canMoveX) player.position.x += moveDir.x;
-    if (canMoveZ) player.position.z += moveDir.z;
-
-
-    // --- Gravity & Jumping ---
+    // Apply gravity
     playerVelocity.y += GRAVITY * deltaTime;
-    player.position.y += playerVelocity.y * deltaTime;
 
-    // Ground check / collision
-    const feetY = player.position.y - PLAYER_HEIGHT;
-    const headY = player.position.y;
-    const groundBlockY = Math.floor(feetY);
+    // Frame's potential displacement vector
+    const frameDisplacement = new THREE.Vector3(
+        horizontalVelocity.x * deltaTime,
+        playerVelocity.y * deltaTime,
+        horizontalVelocity.z * deltaTime
+    );
 
-    // Check blocks around feet for ground collision
-    const feetMinX = Math.floor(player.position.x - PLAYER_WIDTH / 2);
-    const feetMaxX = Math.floor(player.position.x + PLAYER_WIDTH / 2);
-    const feetMinZ = Math.floor(player.position.z - PLAYER_WIDTH / 2);
-    const feetMaxZ = Math.floor(player.position.z + PLAYER_WIDTH / 2);
 
-    onGround = false;
-    for (let x = feetMinX; x <= feetMaxX; x++) {
-        for (let z = feetMinZ; z <= feetMaxZ; z++) {
-             if (isSolidWorld(x, groundBlockY, z)) {
-                 if (feetY <= groundBlockY + 1) { // +1 because block top is at y+1
-                    player.position.y = groundBlockY + 1 + PLAYER_HEIGHT;
-                    playerVelocity.y = 0;
-                    onGround = true;
-                    break;
-                 }
-             }
+    // --- Collision Detection (Axis-by-Axis) ---
+    const currentPos = player.position.clone(); // Start with current position
+    let correctedPos = currentPos.clone(); // Position after collision adjustments
+
+    onGround = false; // Reset before checks
+
+    // --- Check Y movement ---
+    let targetYPos = currentPos.clone().add(new THREE.Vector3(0, frameDisplacement.y, 0));
+    let playerBoxY = getPlayerBoundingBox(targetYPos);
+    let potentialYBlocks = getBlocksInBoundingBox(playerBoxY);
+
+    for (const block of potentialYBlocks) {
+        const blockBox = new THREE.Box3(
+            new THREE.Vector3(block.x, block.y, block.z),
+            new THREE.Vector3(block.x + 1, block.y + 1, block.z + 1)
+        );
+        if (playerBoxY.intersectsBox(blockBox)) {
+            if (frameDisplacement.y < 0) { // Moving Down
+                // Adjust position to be just above the block
+                correctedPos.y = block.y + 1 + PLAYER_HEIGHT + epsilon;
+                playerVelocity.y = 0;
+                onGround = true;
+            } else if (frameDisplacement.y > 0) { // Moving Up (Hit ceiling)
+                // Adjust position to be just below the block
+                 correctedPos.y = block.y - epsilon;
+                 playerVelocity.y = 0;
+            }
+             // Recalculate potential displacement for Y after correction
+             frameDisplacement.y = correctedPos.y - currentPos.y;
+            break; // Collision resolved for Y axis
         }
-         if (onGround) break;
     }
+    // Apply the potentially corrected Y displacement
+    correctedPos.y = currentPos.y + frameDisplacement.y;
 
-     // Head collision
-     const headBlockY = Math.floor(headY);
-     for (let x = feetMinX; x <= feetMaxX; x++) {
-        for (let z = feetMinZ; z <= feetMaxZ; z++) {
-             if (isSolidWorld(x, headBlockY, z)) {
-                 if (headY >= headBlockY) {
-                    player.position.y = headBlockY - 0.01; // Push down slightly below ceiling
-                    playerVelocity.y = Math.min(0, playerVelocity.y); // Stop upward motion
-                    break;
-                 }
+
+    // --- Check X movement ---
+    let targetXPos = correctedPos.clone().add(new THREE.Vector3(frameDisplacement.x, 0, 0)); // Use already corrected Y pos
+    let playerBoxX = getPlayerBoundingBox(targetXPos);
+    let potentialXBlocks = getBlocksInBoundingBox(playerBoxX);
+
+    for (const block of potentialXBlocks) {
+        const blockBox = new THREE.Box3(
+            new THREE.Vector3(block.x, block.y, block.z),
+            new THREE.Vector3(block.x + 1, block.y + 1, block.z + 1)
+        );
+        if (playerBoxX.intersectsBox(blockBox)) {
+             const halfWidth = PLAYER_WIDTH / 2;
+             if (frameDisplacement.x > 0) { // Moving Right (+X)
+                  correctedPos.x = block.x - halfWidth - epsilon;
+             } else if (frameDisplacement.x < 0) { // Moving Left (-X)
+                  correctedPos.x = block.x + 1 + halfWidth + epsilon;
              }
+             // Recalculate potential displacement for X after correction
+             frameDisplacement.x = correctedPos.x - currentPos.x;
+             // We don't zero out horizontal velocity here, just prevent penetration
+             break; // Collision resolved for X axis
         }
-         if (playerVelocity.y <= 0) break; // Stop checking if moving down
     }
+    // Apply the potentially corrected X displacement
+    correctedPos.x = currentPos.x + frameDisplacement.x;
 
 
-    // Jumping
+    // --- Check Z movement ---
+    let targetZPos = correctedPos.clone().add(new THREE.Vector3(0, 0, frameDisplacement.z)); // Use already corrected Y and X pos
+    let playerBoxZ = getPlayerBoundingBox(targetZPos);
+    let potentialZBlocks = getBlocksInBoundingBox(playerBoxZ);
+
+    for (const block of potentialZBlocks) {
+        const blockBox = new THREE.Box3(
+            new THREE.Vector3(block.x, block.y, block.z),
+            new THREE.Vector3(block.x + 1, block.y + 1, block.z + 1)
+        );
+        if (playerBoxZ.intersectsBox(blockBox)) {
+             const halfWidth = PLAYER_WIDTH / 2;
+             if (frameDisplacement.z > 0) { // Moving "Forward" (+Z world)
+                 correctedPos.z = block.z - halfWidth - epsilon;
+             } else if (frameDisplacement.z < 0) { // Moving "Backward" (-Z world)
+                 correctedPos.z = block.z + 1 + halfWidth + epsilon;
+             }
+            // Recalculate potential displacement for Z after correction
+             frameDisplacement.z = correctedPos.z - currentPos.z;
+             // We don't zero out horizontal velocity here, just prevent penetration
+            break; // Collision resolved for Z axis
+        }
+    }
+     // Apply the potentially corrected Z displacement
+     correctedPos.z = currentPos.z + frameDisplacement.z;
+
+
+    // --- Apply Final Position ---
+    player.position.copy(correctedPos); // Update player position with corrected values
+
+
+    // --- Jumping ---
     if (keys['Space'] && onGround) {
         playerVelocity.y = JUMP_VELOCITY;
-        onGround = false;
+        onGround = false; // Immediately set to false after jump impulse
+    }
+
+    // Prevent falling through floor
+    // if (playerPos.y < -50) { // Note: Using playerPos here might be slightly outdated, should use correctedPos or player.position
+    if (player.position.y < -50) { // Use the updated player position
+         player.position.y = CHUNK_HEIGHT + 10; // Respawn high up
+         playerVelocity.set(0,0,0);
     }
 }
 
@@ -495,45 +563,37 @@ function onMouseDown(event) {
 
         // Calculate block coordinates based on intersection point and face normal
         const point = intersection.point;
-        const normal = intersection.face.normal.clone(); // Use face normal
+        const normal = intersection.face.normal.clone(); // Use face normal from the intersection
 
-         // Move slightly into the block face for breaking, or away for placing
-         const offset = event.button === 0 ? -0.5 : 0.5;
-         const blockPos = point.clone().addScaledVector(normal, offset).floor();
-         // Adjust for floating point inaccuracies near edges
-         if (normal.x !== 0) blockPos.x = Math.round(point.x + normal.x * offset);
-         if (normal.y !== 0) blockPos.y = Math.round(point.y + normal.y * offset);
-         if (normal.z !== 0) blockPos.z = Math.round(point.z + normal.z * offset);
-         blockPos.floor(); // Ensure integer coords
-
+        // Tiny epsilon value to push slightly along the normal
+        const epsilon = 0.001;
 
         if (event.button === 0) { // Left Click: Break Block
-             console.log("Breaking block at:", blockPos.x, blockPos.y, blockPos.z);
-            setBlockWorld(blockPos.x, blockPos.y, blockPos.z, BLOCK.AIR);
+            // Calculate the position slightly INSIDE the clicked face
+            const breakPos = point.clone().addScaledVector(normal, -epsilon).floor();
+            console.log("Breaking block at:", breakPos.x, breakPos.y, breakPos.z);
+            setBlockWorld(breakPos.x, breakPos.y, breakPos.z, BLOCK.AIR);
+
         } else if (event.button === 2) { // Right Click: Place Block
-             // Need to get the position *outside* the clicked block face
-            const placePos = point.clone().addScaledVector(normal, -0.5).floor(); // Move back from face
-             if (normal.x !== 0) placePos.x = Math.round(point.x - normal.x * 0.5);
-             if (normal.y !== 0) placePos.y = Math.round(point.y - normal.y * 0.5);
-             if (normal.z !== 0) placePos.z = Math.round(point.z - normal.z * 0.5);
-             placePos.floor();
+            // Calculate the position slightly OUTSIDE the clicked face
+            const placePos = point.clone().addScaledVector(normal, epsilon).floor();
 
-             // Check if player is intersecting the placement location
-             const playerBB = new THREE.Box3(
-                 new THREE.Vector3(camera.position.x - PLAYER_WIDTH/2, camera.position.y - PLAYER_HEIGHT, camera.position.z - PLAYER_WIDTH/2),
-                 new THREE.Vector3(camera.position.x + PLAYER_WIDTH/2, camera.position.y, camera.position.z + PLAYER_WIDTH/2)
-             );
-             const placeBB = new THREE.Box3(
-                 new THREE.Vector3(placePos.x, placePos.y, placePos.z),
-                 new THREE.Vector3(placePos.x + 1, placePos.y + 1, placePos.z + 1)
-             );
+            // Check if player is intersecting the placement location
+            const playerBB = new THREE.Box3(
+                new THREE.Vector3(camera.position.x - PLAYER_WIDTH/2, camera.position.y - PLAYER_HEIGHT, camera.position.z - PLAYER_WIDTH/2),
+                new THREE.Vector3(camera.position.x + PLAYER_WIDTH/2, camera.position.y, camera.position.z + PLAYER_WIDTH/2)
+            );
+            const placeBB = new THREE.Box3(
+                new THREE.Vector3(placePos.x, placePos.y, placePos.z),
+                new THREE.Vector3(placePos.x + 1, placePos.y + 1, placePos.z + 1)
+            );
 
-             if (!playerBB.intersectsBox(placeBB)) {
-                 console.log("Placing block at:", placePos.x, placePos.y, placePos.z);
-                 setBlockWorld(placePos.x, placePos.y, placePos.z, currentBlockType);
-             } else {
-                 console.log("Cannot place block inside player");
-             }
+            if (!playerBB.intersectsBox(placeBB) && getBlockWorld(placePos.x, placePos.y, placePos.z) === BLOCK.AIR) { // Also check ifplacement spot is air
+                console.log("Placing block at:", placePos.x, placePos.y, placePos.z);
+                setBlockWorld(placePos.x, placePos.y, placePos.z, currentBlockType);
+            } else {
+                console.log("Cannot place block inside player or in non-air block");
+            }
         }
     }
 }

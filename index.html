@@ -36,17 +36,23 @@
         <div class="toolbar-slot selected">DIRT</div>
         <div class="toolbar-slot">STONE</div>
         <div class="toolbar-slot">WOOD</div>
-         <!-- ... more slots ... -->
+        <div class="toolbar-slot">GRASS</div> <!-- Added Slot 4 -->
+        <div class="toolbar-slot">LEAVES</div> <!-- Added Slot 5 -->
+        <div class="toolbar-slot">SLOT 6</div> <!-- Placeholder Slot 6 -->
+        <div class="toolbar-slot">SLOT 7</div> <!-- Placeholder Slot 7 -->
+        <div class="toolbar-slot">SLOT 8</div> <!-- Placeholder Slot 8 -->
+        <div class="toolbar-slot">SLOT 9</div> <!-- Placeholder Slot 9 -->
+        <div class="toolbar-slot">SLOT 0</div> <!-- Placeholder Slot 10 (mapped to 0 key) -->
     </div>
 
     <script type="importmap">
-        {
-            "imports": {
-                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
-                 "noise": "https://unpkg.com/simplex-noise@4.0.1/dist/esm/simplex-noise.js" // Noise library
-            }
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+            "noise": "https://unpkg.com/simplex-noise@4.0.1/dist/esm/simplex-noise.js"
         }
+    }
     </script>
     <script type="module" src="voxel-game.js"></script>
 </body>
